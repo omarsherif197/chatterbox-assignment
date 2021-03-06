@@ -153,7 +153,19 @@ func (c *Chatter) InitiateHandshake(partnerIdentity *PublicKey) (*PublicKey, err
 
 	c.Sessions[*partnerIdentity] = &Session{
 		CachedReceiveKeys: make(map[int]*SymmetricKey),
+		MyDHRatchet:       GenerateKeyPair(),
+		PartnerDHRatchet:  nil,
+		RootChain:         nil,
+		SendChain:         nil,
+		ReceiveChain:      nil,
+		SendCounter:       0,
+		LastUpdate:        0,
+		ReceiveCounter:    0,
 		// TODO: your code here
+	}
+
+	if _, ok := c.Sessions[*partnerIdentity]; ok {
+		return &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey, nil
 	}
 
 	// TODO: your code here
@@ -174,12 +186,28 @@ func (c *Chatter) ReturnHandshake(partnerIdentity,
 
 	c.Sessions[*partnerIdentity] = &Session{
 		CachedReceiveKeys: make(map[int]*SymmetricKey),
+		MyDHRatchet:       GenerateKeyPair(),
+		PartnerDHRatchet:  partnerEphemeral,
+		RootChain:         nil,
+		SendChain:         nil,
+		ReceiveChain:      nil,
+		SendCounter:       0,
+		LastUpdate:        0,
+		ReceiveCounter:    0,
 		// TODO: your code here
 	}
 
+	key1 := DHCombine(partnerIdentity, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
+	key2 := DHCombine(partnerEphemeral, &c.Identity.PrivateKey)
+	key3 := DHCombine(partnerEphemeral, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
+	combinedkey := CombineKeys(key1, key2, key3)
+	c.Sessions[*partnerIdentity].RootChain = combinedkey
+	finalkey := combinedkey.DeriveKey(HANDSHAKE_CHECK_LABEL)
+	return &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey, finalkey, nil
+
 	// TODO: your code here
 
-	return nil, nil, errors.New("Not implemented")
+	//return nil, nil, errors.New("Not implemented")
 }
 
 // FinalizeHandshake lets the initiator receive the responder's ephemeral key
@@ -193,9 +221,16 @@ func (c *Chatter) FinalizeHandshake(partnerIdentity,
 		return nil, errors.New("Can't finalize session, not yet open")
 	}
 
+	c.Sessions[*partnerIdentity].PartnerDHRatchet = partnerEphemeral
+	key1 := DHCombine(partnerEphemeral, &c.Identity.PrivateKey)
+	key2 := DHCombine(partnerIdentity, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
+	key3 := DHCombine(partnerEphemeral, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
+	combinedkey := CombineKeys(key1, key2, key3)
+	c.Sessions[*partnerIdentity].RootChain = combinedkey
+	finalkey := combinedkey.DeriveKey(HANDSHAKE_CHECK_LABEL)
 	// TODO: your code here
-
-	return nil, errors.New("Not implemented")
+	return finalkey, nil
+	//return nil, errors.New("Not implemented")
 }
 
 // SendMessage is used to send the given plaintext string as a message.
