@@ -202,6 +202,7 @@ func (c *Chatter) ReturnHandshake(partnerIdentity,
 	key3 := DHCombine(partnerEphemeral, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
 	combinedkey := CombineKeys(key1, key2, key3)
 	c.Sessions[*partnerIdentity].RootChain = combinedkey
+	c.Sessions[*partnerIdentity].ReceiveChain = combinedkey
 	finalkey := combinedkey.DeriveKey(HANDSHAKE_CHECK_LABEL)
 	return &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey, finalkey, nil
 
@@ -227,6 +228,7 @@ func (c *Chatter) FinalizeHandshake(partnerIdentity,
 	key3 := DHCombine(partnerEphemeral, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
 	combinedkey := CombineKeys(key1, key2, key3)
 	c.Sessions[*partnerIdentity].RootChain = combinedkey
+	c.Sessions[*partnerIdentity].SendChain = combinedkey
 	finalkey := combinedkey.DeriveKey(HANDSHAKE_CHECK_LABEL)
 	// TODO: your code here
 	return finalkey, nil
@@ -243,14 +245,21 @@ func (c *Chatter) SendMessage(partnerIdentity *PublicKey,
 	}
 
 	message := &Message{
-		Sender:   &c.Identity.PublicKey,
-		Receiver: partnerIdentity,
+		Sender:        &c.Identity.PublicKey,
+		Receiver:      partnerIdentity,
+		NextDHRatchet: nil,
+		Counter:       0,
+		Ciphertext:    nil,
+		IV:            NewIV(),
 		// TODO: your code here
 	}
-
+	c.Sessions[*partnerIdentity].SendChain = c.Sessions[*partnerIdentity].SendChain.DeriveKey(CHAIN_LABEL)
+	messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
+	message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, nil, message.IV)
+	return message, nil
 	// TODO: your code here
 
-	return message, errors.New("Not implemented")
+	//return message, errors.New("Not implemented")
 }
 
 // ReceiveMessage is used to receive the given message and return the correct
@@ -263,6 +272,13 @@ func (c *Chatter) ReceiveMessage(message *Message) (string, error) {
 	}
 
 	// TODO: your code here
+	c.Sessions[*message.Sender].ReceiveChain = c.Sessions[*message.Sender].ReceiveChain.DeriveKey(CHAIN_LABEL)
+	messagekey := c.Sessions[*message.Sender].ReceiveChain.DeriveKey(KEY_LABEL)
+	return messagekey.AuthenticatedDecrypt(message.Ciphertext, nil, message.IV)
 
-	return "", errors.New("Not implemented")
+	//return "", errors.New("Not implemented")
 }
+
+//to do, derive new dhratchet and assign it to variables in session and then to dhratchet in message.
+// do if sent ==0 use old ratchet, else you do something(figure out how to know who sent last),
+//maybe check send and receive chain? update one to nil when not being used
