@@ -253,10 +253,27 @@ func (c *Chatter) SendMessage(partnerIdentity *PublicKey,
 		IV:            NewIV(),
 		// TODO: your code here
 	}
-	c.Sessions[*partnerIdentity].SendChain = c.Sessions[*partnerIdentity].SendChain.DeriveKey(CHAIN_LABEL)
-	messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
-	message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, nil, message.IV)
+
+	//if sender already owns chain he doesn't need to ratchet the root chain
+	if c.Sessions[*partnerIdentity].SendChain != nil {
+		c.Sessions[*partnerIdentity].SendChain = c.Sessions[*partnerIdentity].SendChain.DeriveKey(CHAIN_LABEL)
+		messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
+		message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, nil, message.IV)
+	} else { //else he ratchets the root chain
+		c.Sessions[*partnerIdentity].MyDHRatchet = GenerateKeyPair()
+		message.NextDHRatchet = &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey
+		ratchetroot := c.Sessions[*partnerIdentity].RootChain.DeriveKey(ROOT_LABEL)
+		newDH := DHCombine(c.Sessions[*partnerIdentity].PartnerDHRatchet, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
+		c.Sessions[*partnerIdentity].RootChain = CombineKeys(ratchetroot, newDH)
+		c.Sessions[*partnerIdentity].SendChain = c.Sessions[*partnerIdentity].RootChain.DeriveKey(CHAIN_LABEL)
+		messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
+		message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, nil, message.IV)
+		c.Sessions[*partnerIdentity].ReceiveChain = nil
+	}
+
+	c.Sessions[*partnerIdentity].SendCounter++
 	return message, nil
+
 	// TODO: your code here
 
 	//return message, errors.New("Not implemented")
@@ -271,11 +288,18 @@ func (c *Chatter) ReceiveMessage(message *Message) (string, error) {
 		return "", errors.New("Can't receive message from partner with no open session")
 	}
 
+	var plaintext string
+	var err error
 	// TODO: your code here
-	c.Sessions[*message.Sender].ReceiveChain = c.Sessions[*message.Sender].ReceiveChain.DeriveKey(CHAIN_LABEL)
-	messagekey := c.Sessions[*message.Sender].ReceiveChain.DeriveKey(KEY_LABEL)
-	return messagekey.AuthenticatedDecrypt(message.Ciphertext, nil, message.IV)
+	if c.Sessions[*message.Sender].ReceiveChain != nil {
+		c.Sessions[*message.Sender].ReceiveChain = c.Sessions[*message.Sender].ReceiveChain.DeriveKey(CHAIN_LABEL)
+		messagekey := c.Sessions[*message.Sender].ReceiveChain.DeriveKey(KEY_LABEL)
+		plaintext, err = messagekey.AuthenticatedDecrypt(message.Ciphertext, nil, message.IV)
+	} else {
 
+	}
+
+	return plaintext, err
 	//return "", errors.New("Not implemented")
 }
 
