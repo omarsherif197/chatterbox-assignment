@@ -277,15 +277,16 @@ func (c *Chatter) ReceiveMessage(message *Message) (string, error) {
 		//this means root key has been updated
 		if message.LastUpdate > ses.ReceiveCounter {
 			//store keys that used the old root key
-			cachekeys(ses, ses.ReceiveCounter, message.LastUpdate)
+			cachekeys(ses, ses.ReceiveCounter+1, message.LastUpdate)
 			//ratchet and then store keys that use new root key
 			ratchetkey(ses, message)
 			//this is because ratchetkey function already derives the Receive chain key, deriving it again would be incorrect
 			ses.CachedReceiveKeys[message.LastUpdate] = ses.ReceiveChain.DeriveKey(KEY_LABEL)
 			//the +1 is because we've already derived the message key for such message
 			cachekeys(ses, message.LastUpdate+1, message.Counter)
+			ses.SendChain = nil
 		} else { //this means root key has not been updated
-			cachekeys(ses, ses.ReceiveCounter, message.Counter)
+			cachekeys(ses, ses.ReceiveCounter+1, message.Counter)
 		}
 		//After you've stored everything, now decrypt the message
 		ses.ReceiveChain = ses.ReceiveChain.DeriveKey(CHAIN_LABEL)
@@ -293,8 +294,13 @@ func (c *Chatter) ReceiveMessage(message *Message) (string, error) {
 		return decrypt(ses, message, messagekey)
 
 	} else if message.Counter < ses.ReceiveCounter { //handling late messages
+		//here we don't call decrypt since decrypt sets the receive counter to the latest message,
+		//which is none of these
 		messagekey := ses.CachedReceiveKeys[message.Counter]
-		return decrypt(ses, message, messagekey)
+		extra := message.EncodeAdditionalData()
+		plaintext, err := messagekey.AuthenticatedDecrypt(message.Ciphertext, extra, message.IV)
+		ses.CachedReceiveKeys[message.Counter].Zeroize()
+		return plaintext, err
 
 	} else { //otherwise the message is in sequence
 		if message.LastUpdate <= ses.ReceiveCounter {
@@ -324,6 +330,7 @@ func ratchetkey(ses *Session, message *Message) {
 	newDH := DHCombine(ses.PartnerDHRatchet, &ses.MyDHRatchet.PrivateKey)
 	ses.RootChain = CombineKeys(ratchetroot, newDH)
 	ses.ReceiveChain = ses.RootChain.DeriveKey(CHAIN_LABEL)
+	ses.MyDHRatchet.Zeroize()
 }
 
 //decrypts the message and returns plaintext
