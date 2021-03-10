@@ -161,16 +161,9 @@ func (c *Chatter) InitiateHandshake(partnerIdentity *PublicKey) (*PublicKey, err
 		SendCounter:       0,
 		LastUpdate:        0,
 		ReceiveCounter:    0,
-		// TODO: your code here
 	}
 
-	if _, ok := c.Sessions[*partnerIdentity]; ok {
-		return &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey, nil
-	}
-
-	// TODO: your code here
-
-	return nil, errors.New("Not implemented")
+	return &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey, nil
 }
 
 // ReturnHandshake prepares the first message sent in a handshake, containing
@@ -194,7 +187,6 @@ func (c *Chatter) ReturnHandshake(partnerIdentity,
 		SendCounter:       0,
 		LastUpdate:        0,
 		ReceiveCounter:    0,
-		// TODO: your code here
 	}
 
 	key1 := DHCombine(partnerIdentity, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
@@ -205,10 +197,6 @@ func (c *Chatter) ReturnHandshake(partnerIdentity,
 	c.Sessions[*partnerIdentity].ReceiveChain = combinedkey
 	finalkey := combinedkey.DeriveKey(HANDSHAKE_CHECK_LABEL)
 	return &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey, finalkey, nil
-
-	// TODO: your code here
-
-	//return nil, nil, errors.New("Not implemented")
 }
 
 // FinalizeHandshake lets the initiator receive the responder's ephemeral key
@@ -230,9 +218,7 @@ func (c *Chatter) FinalizeHandshake(partnerIdentity,
 	c.Sessions[*partnerIdentity].RootChain = combinedkey
 	c.Sessions[*partnerIdentity].SendChain = combinedkey
 	finalkey := combinedkey.DeriveKey(HANDSHAKE_CHECK_LABEL)
-	// TODO: your code here
 	return finalkey, nil
-	//return nil, errors.New("Not implemented")
 }
 
 // SendMessage is used to send the given plaintext string as a message.
@@ -247,18 +233,16 @@ func (c *Chatter) SendMessage(partnerIdentity *PublicKey,
 	message := &Message{
 		Sender:        &c.Identity.PublicKey,
 		Receiver:      partnerIdentity,
-		NextDHRatchet: nil,
+		NextDHRatchet: &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey,
 		Counter:       0,
+		LastUpdate:    0,
 		Ciphertext:    nil,
 		IV:            NewIV(),
-		// TODO: your code here
 	}
 
 	//if sender already owns chain he doesn't need to ratchet the root chain
 	if c.Sessions[*partnerIdentity].SendChain != nil {
 		c.Sessions[*partnerIdentity].SendChain = c.Sessions[*partnerIdentity].SendChain.DeriveKey(CHAIN_LABEL)
-		messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
-		message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, nil, message.IV)
 	} else { //else he ratchets the root chain
 		c.Sessions[*partnerIdentity].MyDHRatchet = GenerateKeyPair()
 		message.NextDHRatchet = &c.Sessions[*partnerIdentity].MyDHRatchet.PublicKey
@@ -266,17 +250,16 @@ func (c *Chatter) SendMessage(partnerIdentity *PublicKey,
 		newDH := DHCombine(c.Sessions[*partnerIdentity].PartnerDHRatchet, &c.Sessions[*partnerIdentity].MyDHRatchet.PrivateKey)
 		c.Sessions[*partnerIdentity].RootChain = CombineKeys(ratchetroot, newDH)
 		c.Sessions[*partnerIdentity].SendChain = c.Sessions[*partnerIdentity].RootChain.DeriveKey(CHAIN_LABEL)
-		messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
-		message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, nil, message.IV)
-		c.Sessions[*partnerIdentity].ReceiveChain = nil
+		c.Sessions[*partnerIdentity].LastUpdate = c.Sessions[*partnerIdentity].SendCounter + 1
 	}
+	message.LastUpdate = c.Sessions[*partnerIdentity].LastUpdate
+	message.Counter = c.Sessions[*partnerIdentity].SendCounter + 1
+	messagekey := c.Sessions[*partnerIdentity].SendChain.DeriveKey(KEY_LABEL)
+	extra := message.EncodeAdditionalData()
+	message.Ciphertext = messagekey.AuthenticatedEncrypt(plaintext, extra, message.IV)
 
 	c.Sessions[*partnerIdentity].SendCounter++
 	return message, nil
-
-	// TODO: your code here
-
-	//return message, errors.New("Not implemented")
 }
 
 // ReceiveMessage is used to receive the given message and return the correct
@@ -288,21 +271,64 @@ func (c *Chatter) ReceiveMessage(message *Message) (string, error) {
 		return "", errors.New("Can't receive message from partner with no open session")
 	}
 
-	var plaintext string
-	var err error
-	// TODO: your code here
-	if c.Sessions[*message.Sender].ReceiveChain != nil {
-		c.Sessions[*message.Sender].ReceiveChain = c.Sessions[*message.Sender].ReceiveChain.DeriveKey(CHAIN_LABEL)
-		messagekey := c.Sessions[*message.Sender].ReceiveChain.DeriveKey(KEY_LABEL)
-		plaintext, err = messagekey.AuthenticatedDecrypt(message.Ciphertext, nil, message.IV)
-	} else {
+	ses := c.Sessions[*message.Sender]
 
+	if message.Counter > ses.ReceiveCounter+1 {
+		//this means root key has been updated
+		if message.LastUpdate > ses.ReceiveCounter {
+			//store keys that used the old root key
+			cachekeys(ses, ses.ReceiveCounter, message.LastUpdate)
+			//ratchet and then store keys that use new root key
+			ratchetkey(ses, message)
+			//this is because ratchetkey function already derives the Receive chain key, deriving it again would be incorrect
+			ses.CachedReceiveKeys[message.LastUpdate] = ses.ReceiveChain.DeriveKey(KEY_LABEL)
+			//the +1 is because we've already derived the message key for such message
+			cachekeys(ses, message.LastUpdate+1, message.Counter)
+		} else { //this means root key has not been updated
+			cachekeys(ses, ses.ReceiveCounter, message.Counter)
+		}
+		//After you've stored everything, now decrypt the message
+		ses.ReceiveChain = ses.ReceiveChain.DeriveKey(CHAIN_LABEL)
+		messagekey := ses.ReceiveChain.DeriveKey(KEY_LABEL)
+		return decrypt(ses, message, messagekey)
+
+	} else if message.Counter < ses.ReceiveCounter { //handling late messages
+		messagekey := ses.CachedReceiveKeys[message.Counter]
+		return decrypt(ses, message, messagekey)
+
+	} else { //otherwise the message is in sequence
+		if message.LastUpdate <= ses.ReceiveCounter {
+			ses.ReceiveChain = ses.ReceiveChain.DeriveKey(CHAIN_LABEL)
+		} else {
+			ratchetkey(ses, message)
+			ses.SendChain = nil
+		}
+		messagekey := ses.ReceiveChain.DeriveKey(KEY_LABEL)
+		return decrypt(ses, message, messagekey)
 	}
-
-	return plaintext, err
-	//return "", errors.New("Not implemented")
 }
 
-//to do, derive new dhratchet and assign it to variables in session and then to dhratchet in message.
-// do if sent ==0 use old ratchet, else you do something(figure out how to know who sent last),
-//maybe check send and receive chain? update one to nil when not being used
+//This caches late messages' keys
+func cachekeys(ses *Session, begin int, end int) {
+	for i := begin; i < end; i++ {
+		ses.ReceiveChain = ses.ReceiveChain.DeriveKey(CHAIN_LABEL)
+		ses.CachedReceiveKeys[i] = ses.ReceiveChain.DeriveKey(KEY_LABEL)
+	}
+	return
+}
+
+//This just ratchets the receive key
+func ratchetkey(ses *Session, message *Message) {
+	ratchetroot := ses.RootChain.DeriveKey(ROOT_LABEL)
+	ses.PartnerDHRatchet = message.NextDHRatchet
+	newDH := DHCombine(ses.PartnerDHRatchet, &ses.MyDHRatchet.PrivateKey)
+	ses.RootChain = CombineKeys(ratchetroot, newDH)
+	ses.ReceiveChain = ses.RootChain.DeriveKey(CHAIN_LABEL)
+}
+
+//decrypts the message and returns plaintext
+func decrypt(ses *Session, message *Message, messagekey *SymmetricKey) (string, error) {
+	extra := message.EncodeAdditionalData()
+	ses.ReceiveCounter = message.Counter
+	return messagekey.AuthenticatedDecrypt(message.Ciphertext, extra, message.IV)
+}
