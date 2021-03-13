@@ -141,7 +141,7 @@ func (c *Chatter) EndSession(partnerIdentity *PublicKey) error {
 	if me.SendChain != nil {
 		me.SendChain.Zeroize()
 	}
-	for y, _ := range me.CachedReceiveKeys {
+	for y := range me.CachedReceiveKeys {
 		me.CachedReceiveKeys[y].Zeroize()
 	}
 
