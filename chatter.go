@@ -253,11 +253,14 @@ func (c *Chatter) SendMessage(partnerIdentity *PublicKey,
 	sender := c.Sessions[*partnerIdentity]
 	//if sender already owns chain he doesn't need to ratchet the root chain
 	if sender.SendChain != nil {
-		sender.SendChain = sender.SendChain.DeriveKey(CHAIN_LABEL)
+		newsend := sender.SendChain.DeriveKey(CHAIN_LABEL)
+		sender.SendChain.Zeroize()
+		sender.SendChain = newsend
 	} else { //else he ratchets the root chain
 		sender.MyDHRatchet = GenerateKeyPair()
 		message.NextDHRatchet = &sender.MyDHRatchet.PublicKey
 		ratchetroot := sender.RootChain.DeriveKey(ROOT_LABEL)
+		sender.RootChain.Zeroize()
 		newDH := DHCombine(sender.PartnerDHRatchet, &sender.MyDHRatchet.PrivateKey)
 		sender.RootChain = CombineKeys(ratchetroot, newDH)
 		sender.SendChain = sender.RootChain.DeriveKey(CHAIN_LABEL)
