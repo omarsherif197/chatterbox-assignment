@@ -30,7 +30,7 @@ const EXTENDED_TEST_PARTICIPANTS = 5
 
 // Rate of messages which will be delivered with modifications
 // Set this to non-zero for test of error recovery
-const EXTENDED_TEST_ERROR_RATE = 0
+const EXTENDED_TEST_ERROR_RATE = 0.2
 
 // number of bytes of fingerprint to display in output
 const HANDLE_LENGTH = 4
